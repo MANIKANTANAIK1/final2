@@ -17,7 +17,7 @@ io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
   if (waitingSocket) {
-    // Pair current socket with waitingSocket
+    
     waitingSocket.partner = socket;
     socket.partner = waitingSocket;
 
