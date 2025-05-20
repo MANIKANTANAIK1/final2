@@ -7,6 +7,9 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+// Serve static files (like app.js, style.css, etc.)
+app.use(express.static(path.join(__dirname)));
+
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -17,7 +20,6 @@ io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
   if (waitingSocket) {
-    
     waitingSocket.partner = socket;
     socket.partner = waitingSocket;
 
@@ -55,7 +57,8 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = 3000;
+// Use process.env.PORT for deployment flexibility
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
