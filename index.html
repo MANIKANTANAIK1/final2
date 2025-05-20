@@ -113,104 +113,128 @@
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    const socket = io();
-    const localVideo = document.getElementById('localVideo');
-    const remoteVideo = document.getElementById('remoteVideo');
-    const nextBtn = document.getElementById('next');
-    const messageInput = document.getElementById('message');
-    const sendBtn = document.getElementById('send');
-    const chatMessages = document.getElementById('chat-messages');
+  const socket = io();
+  const localVideo = document.getElementById('localVideo');
+  const remoteVideo = document.getElementById('remoteVideo');
+  const nextBtn = document.getElementById('next');
+  const messageInput = document.getElementById('message');
+  const sendBtn = document.getElementById('send');
+  const chatMessages = document.getElementById('chat-messages');
 
-    let peerConnection;
-    const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+  let peerConnection;
+  const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+  let candidateQueue = [];
+  let remoteDescSet = false;
 
-    async function startCall() {
-      peerConnection = new RTCPeerConnection(config);
+  async function startCall() {
+    peerConnection = new RTCPeerConnection(config);
+    remoteDescSet = false;
+    candidateQueue = [];
 
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
-      localVideo.srcObject = stream;
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+    localVideo.srcObject = stream;
 
-      peerConnection.ontrack = ({ streams: [stream] }) => {
-        remoteVideo.srcObject = stream;
-      };
+    peerConnection.ontrack = ({ streams: [stream] }) => {
+      remoteVideo.srcObject = stream;
+    };
 
-      peerConnection.onicecandidate = ({ candidate }) => {
-        if (candidate) {
-          socket.emit('ice-candidate', { candidate });
-        }
-      };
+    peerConnection.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        socket.emit('ice-candidate', { candidate });
+      }
+    };
 
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-      socket.emit('offer', { offer });
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    socket.emit('offer', { offer });
+  }
+
+  socket.on('offer', async ({ offer }) => {
+    peerConnection = new RTCPeerConnection(config);
+    remoteDescSet = false;
+    candidateQueue = [];
+
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+    localVideo.srcObject = stream;
+
+    peerConnection.ontrack = ({ streams: [stream] }) => {
+      remoteVideo.srcObject = stream;
+    };
+
+    peerConnection.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        socket.emit('ice-candidate', { candidate });
+      }
+    };
+
+    await peerConnection.setRemoteDescription(offer);
+    remoteDescSet = true;
+
+    // Apply queued ICE candidates
+    for (const c of candidateQueue) {
+      await peerConnection.addIceCandidate(c);
     }
+    candidateQueue = [];
 
-    socket.on('offer', async ({ offer }) => {
-      peerConnection = new RTCPeerConnection(config);
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+    socket.emit('answer', { answer });
+  });
 
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
-      localVideo.srcObject = stream;
+  socket.on('answer', async ({ answer }) => {
+    await peerConnection.setRemoteDescription(answer);
+    remoteDescSet = true;
 
-      peerConnection.ontrack = ({ streams: [stream] }) => {
-        remoteVideo.srcObject = stream;
-      };
+    // Apply queued ICE candidates
+    for (const c of candidateQueue) {
+      await peerConnection.addIceCandidate(c);
+    }
+    candidateQueue = [];
+  });
 
-      peerConnection.onicecandidate = ({ candidate }) => {
-        if (candidate) {
-          socket.emit('ice-candidate', { candidate });
-        }
-      };
-
-      await peerConnection.setRemoteDescription(offer);
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      socket.emit('answer', { answer });
-    });
-
-    socket.on('answer', async ({ answer }) => {
-      await peerConnection.setRemoteDescription(answer);
-    });
-
-    socket.on('ice-candidate', async ({ candidate }) => {
-      if (peerConnection) {
+  socket.on('ice-candidate', async ({ candidate }) => {
+    if (peerConnection) {
+      if (remoteDescSet) {
         await peerConnection.addIceCandidate(candidate);
+      } else {
+        candidateQueue.push(candidate);
       }
-    });
-
-    nextBtn.onclick = () => {
-      if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
-        remoteVideo.srcObject = null;
-      }
-      socket.disconnect();
-      location.reload();
-    };
-
-    sendBtn.onclick = () => {
-      const msg = messageInput.value;
-      if (msg.trim() !== '') {
-        appendMessage('You', msg);
-        socket.emit('chat', msg);
-        messageInput.value = '';
-      }
-    };
-
-    socket.on('chat', msg => {
-      appendMessage('Stranger', msg);
-    });
-
-    function appendMessage(sender, msg) {
-      const div = document.createElement('div');
-      div.textContent = `${sender}: ${msg}`;
-      chatMessages.appendChild(div);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
     }
+  });
 
-    startCall();
-    
-  </script>
+  nextBtn.onclick = () => {
+    if (peerConnection) {
+      peerConnection.close();
+      peerConnection = null;
+      remoteVideo.srcObject = null;
+    }
+    socket.disconnect();
+    location.reload();
+  };
+
+  sendBtn.onclick = () => {
+    const msg = messageInput.value;
+    if (msg.trim() !== '') {
+      appendMessage('You', msg);
+      socket.emit('chat', msg);
+      messageInput.value = '';
+    }
+  };
+
+  socket.on('chat', msg => {
+    appendMessage('Stranger', msg);
+  });
+
+  function appendMessage(sender, msg) {
+    const div = document.createElement('div');
+    div.textContent = `${sender}: ${msg}`;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  startCall();
+</script>
 </body>
 </html>
